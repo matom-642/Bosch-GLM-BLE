@@ -5,6 +5,7 @@ import logging
 import os
 import struct
 import subprocess
+import sys
 from pynput.keyboard import Controller
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -18,8 +19,16 @@ logger = logging.getLogger(__name__)
 keyboard = Controller()
 
 def beep(sound_file):
-    # fire-and-forget so playback doesn't block the event loop
-    subprocess.Popen(['afplay', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # fire-and-forget so playback doesn't block the event loop; never let a sound failure kill the connection
+    try:
+        if sys.platform == 'win32':
+            import winsound
+            # the bundled .aiff files can't be played by winsound, so use system sounds instead
+            winsound.MessageBeep(winsound.MB_OK if sound_file == CONNECT_SOUND else winsound.MB_ICONHAND)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['afplay', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        logger.debug("could not play sound: %s", e)
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -43,6 +52,7 @@ def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearra
     if data.startswith(b'\xc0\x55\x10\x06'):
         # bytes 7-10 contain the length (as little endian 32-bit float)
         length = str(round(struct.unpack('<f', data[7:11])[0] * 1000))
+        logger.info("measurement: %s mm", length)
         # Type the length into the current program.
         keyboard.type(length)
         keyboard.type("\n")
