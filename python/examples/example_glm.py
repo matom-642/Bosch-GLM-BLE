@@ -83,7 +83,10 @@ async def main() -> None:
         # 3. Readings from the measure button, until Ctrl+C.
         print("\nPress the measure button on the meter (Ctrl+C to stop)...")
         async for reading in glm.readings():
-            print(f"  button: {reading.distance_mm:.1f} mm (counter {reading.counter})")
+            if reading.ok:
+                print(f"  button: {reading.distance_mm:.1f} mm (counter {reading.counter})")
+            else:
+                print("  button: measurement failed (no target?)")
 
 
 if __name__ == "__main__":

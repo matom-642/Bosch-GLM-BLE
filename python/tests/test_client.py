@@ -81,9 +81,13 @@ class FakeMeter:
             self.ack(reply(0x04))
 
     def press_button(self):
-        """Simulate a single-mode button press: laser on, then a result."""
-        self.counter += 1
-        event = sync_data(p.EVENT_RESULT, False, self.counter, self.distance_m)
+        """Simulate a single-mode button press: a result, or an error frame
+        when the meter can't measure (counter unchanged, as observed)."""
+        if self.can_measure:
+            self.counter += 1
+            event = sync_data(p.EVENT_RESULT, False, self.counter, self.distance_m)
+        else:
+            event = sync_data(p.EVENT_ERROR, False, self.counter, 1.0)
         self.push(p.build_command(p.CMD_SYNC, event))
 
 
@@ -194,7 +198,24 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_button_press_goes_to_readings(self):
         self.meter.press_button()
         reading = await asyncio.wait_for(self.glm.readings().__anext__(), 1)
-        self.assertEqual((reading.source, reading.distance_mm), ("button", 1895.2))
+        self.assertEqual((reading.ok, reading.source, reading.distance_mm), (True, "button", 1895.2))
+
+    async def test_failed_button_press_is_delivered_and_loop_continues(self):
+        readings = self.glm.readings()
+        self.meter.can_measure = False
+        self.meter.press_button()
+        failed = await asyncio.wait_for(readings.__anext__(), 1)
+        self.assertEqual((failed.ok, failed.distance_mm, failed.source), (False, None, "button"))
+        self.assertEqual(failed.counter, 0x53)
+        # the same loop keeps delivering readings afterwards
+        self.meter.can_measure = True
+        self.meter.press_button()
+        good = await asyncio.wait_for(readings.__anext__(), 1)
+        self.assertEqual((good.ok, good.distance_mm), (True, 1895.2))
+
+    async def test_measure_and_fast_readings_are_ok(self):
+        self.assertTrue((await self.glm.measure()).ok)
+        self.assertTrue((await self.glm.measure_fast()).ok)
 
     async def test_lost_acknowledgement_does_not_double_step(self):
         self.meter.lose_acks = 1  # the laser-on command arrives, its ack doesn't

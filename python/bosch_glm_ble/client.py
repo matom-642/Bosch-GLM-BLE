@@ -70,7 +70,8 @@ class GLMDisconnected(GLMError):
 
 @dataclass(frozen=True)
 class Reading:
-    distance_mm: float  # rounded to 0.1 mm
+    ok: bool  # False: the meter could not measure (only from readings())
+    distance_mm: Optional[float]  # rounded to 0.1 mm; None when ok is False
     source: str  # "measure", "fast" or "button"
     reference: str  # "meter" (the meter's own setting), "top" or "bottom"
     counter: Optional[int]  # the meter's measurement counter; None for fast readings
@@ -247,6 +248,7 @@ class GLM:
             raise GLMMeasurementError("the meter could not measure (no target or out of range)")
         distance += p.REFERENCE_OFFSETS_MM[self.reference]
         return Reading(
+            ok=True,
             distance_mm=p.round_mm(distance),
             source="fast",
             reference=self.reference,
@@ -403,6 +405,7 @@ class GLM:
         waiting = self._result_future if self._result_future and not self._result_future.done() else None
         if event.kind == p.EVENT_RESULT:
             reading = Reading(
+                ok=True,
                 distance_mm=p.round_mm(p.metres_to_mm(event.value)),
                 source="button",
                 reference="meter",
@@ -419,7 +422,17 @@ class GLM:
                 waiting.set_exception(
                     GLMMeasurementError("the meter could not measure (no target or out of range)"))
             else:
-                logger.info("button measurement failed on the meter")
+                # A failed button press: deliver it so readings() can report it.
+                # Raising instead would end the caller's readings() loop.
+                self._readings.put_nowait(Reading(
+                    ok=False,
+                    distance_mm=None,
+                    source="button",
+                    reference="meter",
+                    counter=event.counter,
+                    timestamp=time.time(),
+                    raw=raw,
+                ))
 
     def _apply_sync(self, data: bytes) -> None:
         sync = p.parse_sync_data(data)
